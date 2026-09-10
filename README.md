@@ -784,7 +784,6 @@ The codebase is plain, dependency-light Python: no framework, no build step, no 
 | [**FEATURES.md**](FEATURES.md) | Every feature, how to turn it on, and how to confirm it works |
 | [**Architecture.md**](Architecture.md) | Module responsibilities and data flow |
 | [**Technology Stack.md**](Technology%20Stack.md) | Every library, and why it was chosen |
-| [**GitHub Push Guide.md**](GitHub%20Push%20Guide.md) | Repository and authorship workflow |
 
 ---
 

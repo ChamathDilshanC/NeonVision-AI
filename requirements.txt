@@ -1,0 +1,20 @@
+# NeonVision AI - Python dependencies
+# Author: ChamathDilshanC
+
+# --- Core vision stack -----------------------------------------------------
+# MediaPipe is pinned below 1.0 because NeonVision AI targets the 0.10.x
+# line; core/mp_runtime.py adapts to either the classic `solutions` graphs
+# (Python 3.9-3.12 wheels) or the newer `tasks` landmarkers (3.13+ wheels).
+opencv-python>=4.8.0.76,<5.0.0
+mediapipe>=0.10.9,<1.0.0
+numpy>=1.24.0,<3.0.0
+
+# --- Gesture control -------------------------------------------------------
+# Cursor movement, clicks and media/arrow keys. Cross-platform.
+pyautogui>=0.9.54
+
+# --- Absolute system volume (Windows) --------------------------------------
+# Optional: without it, volume falls back to synthesised volumeup/volumedown
+# key presses, which work everywhere but cannot read the true level.
+pycaw>=20230407; sys_platform == "win32"
+comtypes>=1.2.0; sys_platform == "win32"

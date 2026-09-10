@@ -1,0 +1,25 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Captured media
+output/*
+!output/.gitkeep
+*.mp4
+*.png
+!docs/*.png
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# MediaPipe Tasks model bundles (downloaded on first run)
+models/

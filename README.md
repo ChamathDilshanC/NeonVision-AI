@@ -23,7 +23,7 @@ Runs at ~65 FPS on a plain CPU. No CUDA. No discrete GPU. Just a webcam.
 
 <br>
 
-[**Features**](#-feature-overview) &nbsp;·&nbsp; [**Quick start**](#-quick-start) &nbsp;·&nbsp; [**Gesture control**](#-gesture-control) &nbsp;·&nbsp; [**Architecture**](#-architecture) &nbsp;·&nbsp; [**Performance**](#-performance) &nbsp;·&nbsp; [**Reference**](#-complete-reference) &nbsp;·&nbsp; [**Feature guide**](FEATURES.md)
+[**Features**](#-feature-overview) &nbsp;·&nbsp; [**Quick start**](#-quick-start) &nbsp;·&nbsp; [**Gesture control**](#-gesture-control) &nbsp;·&nbsp; [**Sleep detection**](#-sleep-detection--alarm-system) &nbsp;·&nbsp; [**Architecture**](#-architecture) &nbsp;·&nbsp; [**Performance**](#-performance) &nbsp;·&nbsp; [**Reference**](#-complete-reference) &nbsp;·&nbsp; [**Feature guide**](FEATURES.md)
 
 </div>
 
@@ -59,7 +59,7 @@ Everything runs locally on the CPU. Nothing leaves your machine.
 | 🖱️ | **Air mouse** | Fingertip moves the cursor; pinch to click and drag |
 | 🎵 | **Media & slide control** | Play/pause, mute, arrow-key swipes, analogue volume dial |
 | ✏️ | **Air drawing** | Paint neon strokes in mid-air with undo and clear |
-| 😴 | **Drowsiness watchdog** | Eye-Aspect-Ratio alarm with pulsing banner and beep |
+| 😴 | **[Sleep detection & alarm](#-sleep-detection--alarm-system)** | Eye-Aspect-Ratio watchdog — pulsing banner + 900 Hz tone, blink-proof |
 | 🎥 | **Video I/O** | MP4 recording, PNG snapshots, and offline video-file processing |
 | 🛡️ | **Three safety layers** | Mode gate, arm/disarm toggle, and a full dry-run mode |
 
@@ -324,25 +324,117 @@ The index fingertip paints neon strokes in the current palette colour. Index alo
 
 ---
 
-## 😴 Safety & monitoring
+## 😴 Sleep detection & alarm system
 
-### Drowsiness alarm
+NeonVision AI watches your eyes on **every single frame** and raises an alarm if they stay shut. It is on by default, costs almost nothing, and never needs a second camera or a wearable.
 
-Eye Aspect Ratio is computed from the face mesh every frame. If the eyes stay closed past a threshold, NeonVision AI raises a **pulsing on-screen banner** and beeps.
+<div align="center">
+<img src="docs/drowsiness.svg" alt="Eye Aspect Ratio: open vs closed eye landmarks, and an EAR trace where blinks are ignored but a sustained closure fires the alarm" width="100%">
+</div>
+
+### How it detects sleep
+
+The detector is built on the **Eye Aspect Ratio (EAR)** — the ratio of an eye's vertical eyelid separation to its horizontal width. As the eyelid closes, the numerator collapses toward zero while the denominator stays put, so the ratio falls off a cliff.
+
+Four landmarks per eye are read straight out of the face mesh:
+
+| Eye | Top lid | Bottom lid | Outer corner | Inner corner |
+|---|---|---|---|---|
+| **Left** | `386` | `374` | `263` | `362` |
+| **Right** | `159` | `145` | `133` | `33` |
+
+```text
+        ‖p_top − p_bottom‖
+EAR  =  ──────────────────      averaged over both eyes
+        ‖p_outer − p_inner‖
+```
+
+Because it is a **ratio of two distances on the same face**, EAR is scale-invariant: it reads the same whether you sit 30 cm or 2 m from the camera, and it does not care about image resolution. Implemented in [`core/face_mesh.py`](core/face_mesh.py) as `FaceMeshResult.eye_aspect_ratio()`.
+
+| EAR | Meaning |
+|---|---|
+| **~0.31** | Eyes wide open |
+| **~0.18** | Threshold — the default line between open and closed |
+| **~0.09** | Eyes fully shut |
+
+### Why blinking never sets it off
+
+A natural blink lasts **100–300 ms**. The watchdog therefore does not fire the moment EAR dips — it requires the ratio to stay below threshold **continuously for 1.2 seconds** before it calls it sleep. Any recovery above the threshold resets the timer to zero.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> NoFace
+    NoFace --> Awake : face acquired
+    Awake --> Closing : EAR < 0.18
+    Closing --> Awake : EAR recovers<br/>(blink — timer reset)
+    Closing --> ALARM : closed ≥ 1.2 s
+    ALARM --> Awake : eyes reopen
+    ALARM --> ALARM : re-fire after<br/>2.5 s cooldown
+    Awake --> NoFace : tracking lost
+
+    note right of ALARM
+        Pulsing red banner
+        + 900 Hz / 320 ms tone
+        on a daemon thread
+    end note
+```
+
+### What happens when it fires
+
+| | Behaviour |
+|---|---|
+| **Visual** | A full-width pulsing red **`DROWSINESS DETECTED`** banner across the frame — always shown, on every platform |
+| **Audible** | A 900 Hz, 320 ms tone |
+| **Non-blocking** | `winsound.Beep` blocks for the whole tone, which would stall the render loop — so tones are played on a short-lived **daemon thread** and suppressed while one is already sounding. The video never drops a frame for the alarm |
+| **Alarm cooldown** | 2.5 s minimum gap between alarms, so a long closure pulses rather than screams continuously |
+| **Never fatal** | The beep path swallows every exception by design — an alert must never crash the loop |
+| **Reset** | Reopening your eyes clears the state immediately; losing the face resets the watchdog |
+
+Implemented as `DrowsinessMonitor` and `Buzzer` in [`controls/gesture_actions.py`](controls/gesture_actions.py).
+
+### Controls & tuning
+
+| | |
+|---|---|
+| **On by default** | Yes — no flag needed |
+| **Toggle live** | `D` |
+| **Confirm it works** | The HUD shows `Eyes OPEN (EAR 0.31)`. Close your eyes for 2 seconds |
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--ear-threshold` | `0.18` | EAR below which the eyes count as closed |
-| `--drowsy-seconds` | `1.2` | Continuous closure needed before the alarm |
-| `--no-alarm` | off | Silent alarm — banner only |
-| `--no-drowsiness` | off | Disable the watchdog entirely |
+| `--ear-threshold` | `0.18` | EAR below which the eyes count as closed — **higher = more sensitive** |
+| `--drowsy-seconds` | `1.2` | Continuous closure needed before the alarm — **lower = quicker to fire** |
+| `--no-alarm` | off | Silent mode: banner only, no tone |
+| `--no-drowsiness` | off | Disable the watchdog entirely at startup |
+
+**Sensible presets:**
+
+```bash
+python main.py --ear-threshold 0.22 --drowsy-seconds 0.8   # hair-trigger: driver monitoring
+python main.py                                             # balanced default
+python main.py --ear-threshold 0.15 --drowsy-seconds 2.0   # relaxed: squinters, small eyes
+python main.py --no-alarm                                  # library / office friendly
+```
+
+> [!TIP]
+> If the alarm fires while you are awake, your natural EAR is below average — **lower** `--ear-threshold` toward `0.15`. If a real doze slips past it, **raise** it toward `0.22`.
 
 > [!NOTE]
-> `winsound` is Windows-only; elsewhere the alarm falls back to the terminal bell. The banner always shows.
+> `winsound` is Windows-only; on macOS and Linux the tone falls back to the terminal bell. **The banner always shows, everywhere.**
 
-### Performance monitoring
+### Where it earns its keep
 
-The HUD reports rolling FPS, total frame time and **per-stage timings** — inference vs render — so you can see exactly where a slow frame went.
+- **Driver / rider monitoring** on a laptop or dash-mounted device
+- **Long study or work sessions** — catches the moment focus goes
+- **Night-shift and control-room stations** where staying awake is the job
+- **Sleep-onset research and self-tracking**, using the printed session summary
+
+---
+
+## 📊 Live monitoring
+
+The HUD reports rolling FPS, total frame time and **per-stage timings** — inference vs render — so you can see exactly where a slow frame went, plus the live EAR readout, tracking counts, active mode and arm state. A session summary is printed on exit.
 
 ---
 
